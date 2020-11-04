@@ -1,0 +1,106 @@
+---
+jobs:
+- name: install-opsman
+  plan:
+  - in_parallel:
+    - get: platform-automation-tasks
+      params: { unpack: true }
+    - get: platform-automation-image
+      params: { unpack: true }
+    - get: configuration
+    - get: state
+  - task: interpolate-env-creds
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/credhub-interpolate.yml
+    params:
+      CREDHUB_CLIENT: ((credhub-client))
+      CREDHUB_SECRET: ((credhub-secret))
+      CREDHUB_SERVER: ((credhub-server))
+      CREDHUB_CA_CERT: ((credhub-ca-cert.certificate))
+      PREFIX: '/concourse/sandbox'
+      SKIP_MISSING: false
+    input_mapping:
+      files: configuration
+    output_mapping:
+      interpolated-files: interpolated-configuration
+  - task: download-opsman-product
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/download-product.yml
+    params:
+      CONFIG_FILE: download-product/opsman.yml
+      SOURCE: gcs
+    input_mapping:
+      config: interpolated-configuration
+    output_mapping:
+      downloaded-product: opsman-image
+  - task: create-vm
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/create-vm.yml
+    input_mapping:
+      image: opsman-image
+      config: interpolated-configuration
+    params:
+      OPSMAN_CONFIG_FILE: sandbox/opsman.yml
+    ensure:
+      do:
+      - put: state
+        params: { file: generated-state/state.yml }
+  - task: configure-authentication
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/configure-authentication.yml
+    input_mapping:
+      env: interpolated-configuration
+      config: interpolated-configuration
+    params:
+      ENV_FILE: sandbox/env.yml
+      AUTH_CONFIG_FILE: sandbox/auth.yml
+  - task: configure-director
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/configure-director.yml
+    input_mapping:
+      env: interpolated-configuration
+      config: interpolated-configuration
+    params:
+      ENV_FILE: sandbox/env.yml
+      DIRECTOR_CONFIG_FILE: sandbox/director.yml
+  - task: apply-changes
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/apply-director-changes.yml
+    input_mapping:
+      env: interpolated-configuration
+    params:
+      ENV_FILE: sandbox/env.yml
+ 
+resource_types:
+- name: gcs
+  type: docker-image
+  source:
+    repository: frodenas/gcs-resource
+
+resources:
+- name: platform-automation-tasks
+  type: gcs
+  source:
+    bucket: ((bucket))
+    regexp: platform-automation-tasks-(.*).zip
+    json_key: ((json_key))
+
+- name: platform-automation-image
+  type: gcs
+  source:
+    bucket: ((bucket))
+    regexp: platform-automation-image-(.*).tgz
+    json_key: ((json_key))
+
+- name: state
+  type: gcs
+  source:
+    bucket: ((state-bucket))
+    versioned_file: state.yml
+    json_key: ((json_key))
+
+- name: configuration
+  type: git
+  source:
+    private_key: ((config-repo-key.private_key))
+    uri: ((config-repo-uri))
