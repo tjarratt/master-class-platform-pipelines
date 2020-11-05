@@ -70,6 +70,40 @@ jobs:
       env: interpolated-configuration
     params:
       ENV_FILE: sandbox/env.yml
+
+- name: export-installation
+  plan:
+  - in_parallel:
+    - get: platform-automation-tasks
+      params: { unpack: true }
+    - get: platform-automation-image
+      params: { unpack: true }
+    - get: configuration
+    - get: daily
+      trigger: true
+  - task: interpolate-env-creds
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/credhub-interpolate.yml
+    params:
+      CREDHUB_CLIENT: ((credhub-client))
+      CREDHUB_SECRET: ((credhub-secret))
+      CREDHUB_SERVER: ((credhub-server))
+      CREDHUB_CA_CERT: ((credhub-ca-cert.certificate))
+      PREFIX: '/concourse/sandbox'
+      SKIP_MISSING: false
+    input_mapping:
+      files: configuration
+    output_mapping:
+      interpolated-files: interpolated-configuration
+  - task: export-installation
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/export-installation.yml
+    input_mapping:
+      env: interpolated-configuration
+    params:
+      ENV_FILE: sandbox/env.yml
+  - put: installation
+    params: { file: installation/installation-*.zip }
  
 resource_types:
 - name: gcs
@@ -104,3 +138,14 @@ resources:
   source:
     private_key: ((config-repo-key.private_key))
     uri: ((config-repo-uri))
+
+- name: installation
+  type: gcs
+  source:
+    bucket: ((state-bucket))
+    versioned_file: installation.zip
+    json_key: ((json_key))
+
+- name: daily
+  type: time
+  source: { interval: 24h }
