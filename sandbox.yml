@@ -104,7 +104,82 @@ jobs:
       ENV_FILE: sandbox/env.yml
   - put: installation
     params: { file: installation/installation-*.zip }
- 
+
+- name: upgrade-opsman
+  plan:
+  - in_parallel:
+    - get: platform-automation-tasks
+      params: { unpack: true }
+    - get: platform-automation-image
+      params: { unpack: true }
+    - get: configuration
+    - get: state
+    - get: installation
+      passed: [ export-installation ]
+  - task: interpolate-env-creds
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/credhub-interpolate.yml
+    params:
+      CREDHUB_CLIENT: ((credhub-client))
+      CREDHUB_SECRET: ((credhub-secret))
+      CREDHUB_SERVER: ((credhub-server))
+      CREDHUB_CA_CERT: ((credhub-ca-cert.certificate))
+      PREFIX: '/concourse/sandbox'
+      SKIP_MISSING: false
+    input_mapping:
+      files: configuration
+    output_mapping:
+      interpolated-files: interpolated-configuration
+  - task: download-opsman-product
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/download-product.yml
+    params:
+      CONFIG_FILE: download-product/opsman.yml
+      SOURCE: gcs
+    input_mapping:
+      config: interpolated-configuration
+    output_mapping:
+      downloaded-product: opsman-image
+  - task: upgrade-opsman
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/upgrade-opsman.yml
+    input_mapping:
+      env: interpolated-configuration
+      config: interpolated-configuration
+      image: opsman-image
+    params:
+      ENV_FILE: sandbox/env.yml
+      OPSMAN_CONFIG_FILE: sandbox/opsman.yml
+    ensure:
+      do:
+      - put: state
+        params: { file: generated-state/state.yml }
+  - task: configure-director
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/configure-director.yml
+    input_mapping:
+      env: interpolated-configuration
+      config: interpolated-configuration
+    params:
+      ENV_FILE: sandbox/env.yml
+      DIRECTOR_CONFIG_FILE: sandbox/director.yml
+  - task: apply-changes
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/apply-director-changes.yml
+    input_mapping:
+      env: interpolated-configuration
+    params:
+      ENV_FILE: sandbox/env.yml
+  - task: export-installation
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/export-installation.yml
+    input_mapping:
+      env: interpolated-configuration
+    params:
+      ENV_FILE: sandbox/env.yml
+  - put: installation
+    params: { file: installation/installation-*.zip }
+
 resource_types:
 - name: gcs
   type: docker-image
